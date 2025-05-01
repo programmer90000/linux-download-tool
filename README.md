@@ -21,13 +21,23 @@ wget (for URL downloads)
 unzip, tar, file utilities
 
 ## Usage
+```
+cd ~/
+mkdir -p ~/bin
+export PATH="$HOME/bin:$PATH"
+cd bin/
+touch download-files.bat
+nano download-files.bat 
+PASTE THE CONTENTS OF BASH-SCRIPT.BASH INTO THIS FILE
+```
+
 Command to run to make script executable:
 ```
-chmod +x extract_script.sh
+chmod +x download-files.sh
 ```
 Command to run the script:
 ```
-./extract_script.sh
+./download-files.sh
 ```
 This will begin the script. The script will ask for a new directory name. If the directory name already exists, the script will fail and provide an error message.
 
