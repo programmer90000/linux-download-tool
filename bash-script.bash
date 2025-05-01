@@ -1,95 +1,101 @@
 #!/bin/bash
+
+# Exit on error
 set -e
-exec > >(tee -i install.log) 2>&1
-export PS4='[$(date "+%Y-%m-%d %H:%M:%S")] '
 
-# Error handler
-error_exit() {
-    echo "Error: $1" >&2
-    exit 1
-}
+LOG_FILE="extraction_log.txt"
 
-# Ensure the script is run with sudo or root privileges
-check_sudo() {
-    if [ "$EUID" -ne 0 ]; then
-        error_exit "Please run this script with sudo or root privileges."
-    fi
-}
+# Wrap entire script body to capture all output into log file
+{
 
-# Validate the source: check if it's a local file or a URL
-validate_source() {
-    local url="$1"
-    if [[ -f "$url" ]]; then
-        echo "Using local archive file: $url"
-        TMP_ARCHIVE="$url"
-    else
-        HTTP_STATUS=$(curl -o /dev/null -s -w "%{http_code}" "$url")
-        if [[ "$HTTP_STATUS" -lt 200 || "$HTTP_STATUS" -ge 400 ]]; then
-            error_exit "Invalid or unreachable URL (HTTP $HTTP_STATUS): $url"
-        fi
-        TMP_ARCHIVE=$(mktemp "/tmp/${PROGRAM_NAME}.XXXXXX.tar.gz")
-        echo "Downloading $PROGRAM_NAME from $url..."
-        curl -fL -# "$url" -o "$TMP_ARCHIVE" || error_exit "Download failed."
-    fi
-}
-
-# Extract the archive to the destination directory
-extract_archive() {
-    echo "Extracting $PROGRAM_NAME to $DEST_DIR"
-    case "$TMP_ARCHIVE" in
-        *.tar.gz)  tar -xvzf "$TMP_ARCHIVE" -C "$DEST_DIR" || error_exit "Extraction failed." ;;
-        *.tar.bz2) tar -xvjf "$TMP_ARCHIVE" -C "$DEST_DIR" || error_exit "Extraction failed." ;;
-        *.tar.xz)  tar -xvJf "$TMP_ARCHIVE" -C "$DEST_DIR" || error_exit "Extraction failed." ;;
-        *.zip)     unzip -q "$TMP_ARCHIVE" -d "$DEST_DIR" || error_exit "Extraction failed." ;;
-        *)         error_exit "Unsupported archive format: $TMP_ARCHIVE" ;;
+# Function to extract supported archives
+extract_file() {
+    file="$1"
+    case "$file" in
+        *.zip) unzip "$file" ;;
+        *.tar.gz|*.tgz) tar xvzf "$file" ;;
+        *.tar.bz2|*.tbz2|*.tbz) tar xvjf "$file" ;;
+        *.tar.xz|*.txz) tar xvJf "$file" ;;
+        *) echo "Unsupported archive type for extraction: $file"; return 1;;
     esac
 }
 
-# Confirm overwriting an existing directory and prepare destination
-confirm_and_prepare_dest() {
-    if [ -d "$DEST_DIR" ]; then
-        echo "Directory $DEST_DIR already exists and contains:"
-        ls -lah "$DEST_DIR"
-        read -p "Do you want to overwrite it? (y/n): " response
-        if [[ "$response" != "y" && "$response" != "Y" ]]; then
-            echo "Operation cancelled."
-            exit 0
-        fi
-        rm -rf "$DEST_DIR" || error_exit "Failed to remove existing directory."
-        echo "Existing directory $DEST_DIR has been deleted."
-    fi
-    mkdir -p "$DEST_DIR" || error_exit "Failed to create directory $DEST_DIR."
+# Function to determine if file is supported archive based on extension
+is_supported_archive_ext() {
+    case "$1" in
+        *.zip|*.tar.gz|*.tgz|*.tar.bz2|*.tbz2|*.tbz|*.tar.xz|*.txz)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
 }
 
-# Cleanup temp files
-clean_up() {
-    [[ -f "$TMP_ARCHIVE" && ! -f "$DOWNLOAD_URL" ]] && rm -f "$TMP_ARCHIVE"
-    echo "Temporary files cleaned up."
+# Function to determine if file is supported archive based on MIME type
+is_supported_mime() {
+    mime_type=$(file --mime-type -b "$1")
+    case "$mime_type" in
+        application/zip|application/x-tar|application/gzip|application/x-bzip2|application/x-xz)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
 }
-trap clean_up EXIT
 
-### Main Script ###
+# Prompt for target directory
+read -rp "Enter the name of the directory to create: " target_dir
+# Check if the directory exists, and log an error if it does
+if [ -d "$target_dir" ]; then
+    echo "[ERROR] Directory $target_dir already exists." >> "$LOG_FILE"
+    echo "Directory $target_dir already exists. Exiting."
+    exit 1
+else
+    mkdir -p "$target_dir"
+    echo "Created directory $target_dir."
+fi
 
-check_sudo
+cd "$target_dir"
 
-# Validate input arguments
-if [ $# -lt 3 ]; then
-    echo "Usage: $0 <program_name> <download_url_or_file> <destination_directory>"
+
+# Prompt for file path or URL
+read -rp "Enter the URL or local path of the file to download/extract: " file_input
+
+# Download or copy the file
+if [[ "$file_input" =~ ^https?:// ]]; then
+    filename=$(basename "$file_input")
+    echo "Downloading $filename..."
+    wget -O "$filename" "$file_input"
+else
+    filename=$(basename "$file_input")
+    echo "Copying $filename..."
+    cp "$file_input" "$filename"
+fi
+
+# Decide what to do with the file
+mime_type=$(file --mime-type -b "$filename")
+if is_supported_archive_ext "$filename" && is_supported_mime "$filename"; then
+    echo "Extracting archive $filename..."
+    echo "[INFO] Extracting archive $filename (MIME: $mime_type)" >> "$LOG_FILE"
+    extract_file "$filename"
+elif [[ -f "$filename" || -d "$filename" ]]; then
+    echo "$filename is a standalone file or folder. Keeping it as is."
+    echo "[INFO] Kept standalone file/folder: $filename (MIME: $mime_type)" >> "$LOG_FILE"
+else
+    echo "Error: Unsupported file type."
+    echo "File name: $filename"
+    echo "File extension: ${filename##*.}"
+    echo "Detected MIME type: $mime_type"
+    echo "Deleting invalid file: $filename"
+    echo "[ERROR] Deleted unsupported file: $filename | Extension: ${filename##*.} | MIME: $mime_type" >> "$LOG_FILE"
+    rm -f "$filename"
+    echo "File deleted. Exiting."
     exit 1
 fi
 
-PROGRAM_NAME="$1"
-DOWNLOAD_URL="$2"
-BASE_DEST_DIR=$(realpath -m "$3")
-DEST_DIR="$BASE_DEST_DIR/$PROGRAM_NAME"
+echo "Done. All contents are in: $PWD"
+echo "[INFO] Operation completed in directory: $PWD" >> "$LOG_FILE"
 
-# Ensure curl or wget is installed
-if ! command -v curl &> /dev/null && ! command -v wget &> /dev/null; then
-    error_exit "Neither curl nor wget is installed. Please install one and try again."
-fi
-
-validate_source "$DOWNLOAD_URL"
-confirm_and_prepare_dest
-extract_archive
-
-echo "$PROGRAM_NAME installed to $DEST_DIR"
+} 2>&1 | tee -a "$LOG_FILE"
