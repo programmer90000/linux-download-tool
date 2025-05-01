@@ -3,7 +3,24 @@
 # Exit on error
 set -e
 
-LOG_FILE="extraction_log.txt"
+# Prompt for target directory
+read -rp "Enter the name of the directory to create: " target_dir
+
+# Check if the directory exists, and log an error if it does
+if [ -d "$target_dir" ]; then
+    echo "[ERROR] Directory $target_dir already exists."
+    echo "Directory $target_dir already exists. Exiting."
+    exit 1
+else
+    mkdir -p "$target_dir"
+    echo "Created directory $target_dir."
+fi
+
+# Set log file path within the target directory
+LOG_FILE="$target_dir/extraction_log.txt"
+
+# Redirect both stdout and stderr to the log file
+exec > >(tee -a "$LOG_FILE") 2>&1
 
 # Wrap entire script body to capture all output into log file
 {
@@ -16,7 +33,7 @@ extract_file() {
         *.tar.gz|*.tgz) tar xvzf "$file" ;;
         *.tar.bz2|*.tbz2|*.tbz) tar xvjf "$file" ;;
         *.tar.xz|*.txz) tar xvJf "$file" ;;
-        *) echo "Unsupported archive type for extraction: $file"; return 1;;
+        *) echo "Unsupported archive type for extraction: $file"; return 1 ;;
     esac
 }
 
@@ -45,20 +62,7 @@ is_supported_mime() {
     esac
 }
 
-# Prompt for target directory
-read -rp "Enter the name of the directory to create: " target_dir
-# Check if the directory exists, and log an error if it does
-if [ -d "$target_dir" ]; then
-    echo "[ERROR] Directory $target_dir already exists." >> "$LOG_FILE"
-    echo "Directory $target_dir already exists. Exiting."
-    exit 1
-else
-    mkdir -p "$target_dir"
-    echo "Created directory $target_dir."
-fi
-
 cd "$target_dir"
-
 
 # Prompt for file path or URL
 read -rp "Enter the URL or local path of the file to download/extract: " file_input
@@ -78,24 +82,24 @@ fi
 mime_type=$(file --mime-type -b "$filename")
 if is_supported_archive_ext "$filename" && is_supported_mime "$filename"; then
     echo "Extracting archive $filename..."
-    echo "[INFO] Extracting archive $filename (MIME: $mime_type)" >> "$LOG_FILE"
+    echo "[INFO] Extracting archive $filename (MIME: $mime_type)"
     extract_file "$filename"
 elif [[ -f "$filename" || -d "$filename" ]]; then
     echo "$filename is a standalone file or folder. Keeping it as is."
-    echo "[INFO] Kept standalone file/folder: $filename (MIME: $mime_type)" >> "$LOG_FILE"
+    echo "[INFO] Kept standalone file/folder: $filename (MIME: $mime_type)"
 else
     echo "Error: Unsupported file type."
     echo "File name: $filename"
     echo "File extension: ${filename##*.}"
     echo "Detected MIME type: $mime_type"
     echo "Deleting invalid file: $filename"
-    echo "[ERROR] Deleted unsupported file: $filename | Extension: ${filename##*.} | MIME: $mime_type" >> "$LOG_FILE"
+    echo "[ERROR] Deleted unsupported file: $filename | Extension: ${filename##*.} | MIME: $mime_type"
     rm -f "$filename"
     echo "File deleted. Exiting."
     exit 1
 fi
 
 echo "Done. All contents are in: $PWD"
-echo "[INFO] Operation completed in directory: $PWD" >> "$LOG_FILE"
+echo "[INFO] Operation completed in directory: $PWD"
 
-} 2>&1 | tee -a "$LOG_FILE"
+}
